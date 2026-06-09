@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
 use Laravel\Sanctum\NewAccessToken;
@@ -19,6 +19,12 @@ use Laravel\Sanctum\NewAccessToken;
 class User extends Authenticatable
 {
     use HasFactory, Notifiable, HasApiTokens;
+
+    /**
+     * Transient plain-text password used to deliver the credential to the
+     * user once (e.g. via WhatsApp) right after creation. NEVER persisted.
+     */
+    public ?string $plainPassword = null;
 
     /**
      * The attributes that are mass assignable.
@@ -63,7 +69,13 @@ class User extends Authenticatable
     protected function password(): Attribute
     {
         return Attribute::make(
-            set: fn(string $value) => Crypt::encryptString($value),
+            set: function (string $value) {
+                // Avoid double-hashing if value is already a bcrypt/argon hash.
+                if (preg_match('/^\$(2y|2a|2b|argon2i|argon2id)\$/', $value)) {
+                    return $value;
+                }
+                return Hash::make($value);
+            },
         );
     }
 

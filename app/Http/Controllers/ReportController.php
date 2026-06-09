@@ -190,33 +190,71 @@ class ReportController extends Controller
 
             $institution = Institution::find($institutionId);
 
-            $studentsQuery = StudentProgram::query()
+            // Each metric below shares the same institution + (optional) year
+            // scope. Re-build the base query for every metric so we can chain
+            // additional `where`/`has` constraints without polluting siblings.
+            $scope = fn() => StudentProgram::query()
                 ->where('institutionId', $institutionId)
-                ->when($yearId, fn($q) => $q->where('yearId', $yearId));
-            $studentQueryOut = StudentProgram::query()
-                ->where('institutionId', $institutionId)
-                ->where('status', 2)
                 ->when($yearId, fn($q) => $q->where('yearId', $yearId));
 
-            $studentsOut = $studentQueryOut->count();
-            $totalStudents = $studentsQuery->count();
-            $verifiedStudents = (clone $studentsQuery)->has('verification')->has('parent')->count();
-            $unverifiedStudents = $totalStudents - $verifiedStudents;
-            $totalBoarding = (clone $studentsQuery)->whereNot('boardingId', 1)->count();
-            $totalNonBoarding = (clone $studentsQuery)->whereBoardingid(1)->count();
+            $totalStats       = $this->genderBreakdown($scope());
+            $verifiedStats    = $this->genderBreakdown(
+                $scope()->has('verification')->has('parent')
+            );
+            $boardingStats    = $this->genderBreakdown(
+                $scope()->where('boardingId', '!=', 1)
+            );
+            $nonBoardingStats = $this->genderBreakdown(
+                $scope()->where('boardingId', 1)
+            );
+            $outStats         = $this->genderBreakdown(
+                $scope()->where('status', 2)
+            );
+
+            // Pending = total − verified, computed component-wise so the
+            // L/P breakdown stays consistent with the verified totals.
+            $unverifiedStats = [
+                'all'    => $totalStats['all']    - $verifiedStats['all'],
+                'male'   => $totalStats['male']   - $verifiedStats['male'],
+                'female' => $totalStats['female'] - $verifiedStats['female'],
+            ];
 
             $programs = Program::where('institutionId', $institutionId)
                 ->when($yearId, fn($q) => $q->where('yearId', $yearId))
                 ->get();
 
-            $programBreakdown = $programs->map(function ($program) use ($yearId, $institutionId) {
+            // Single grouped query (replaces an N+1 count() loop). Joins to
+            // student_personals so we can break each program down by gender
+            // in one round-trip.
+            $programRows = StudentProgram::query()
+                ->where('student_programs.institutionId', $institutionId)
+                ->when($yearId, fn($q) => $q->where('student_programs.yearId', $yearId))
+                ->join(
+                    'student_personals',
+                    'student_personals.userId',
+                    '=',
+                    'student_programs.userId'
+                )
+                ->selectRaw(
+                    'student_programs.programId as program_id,
+                     COUNT(*) as all_count,
+                     SUM(CASE WHEN student_personals.gender = 1 THEN 1 ELSE 0 END) as male_count,
+                     SUM(CASE WHEN student_personals.gender = 2 THEN 1 ELSE 0 END) as female_count'
+                )
+                ->groupBy('student_programs.programId')
+                ->get()
+                ->keyBy('program_id');
+
+            $programBreakdown = $programs->map(function ($program) use ($programRows) {
+                $row = $programRows->get($program->id);
                 return [
-                    'name' => $program->name,
+                    'name'  => $program->name,
                     'alias' => $program->alias,
-                    'total' => StudentProgram::where('institutionId', $institutionId)
-                        ->when($yearId, fn($q) => $q->where('yearId', $yearId))
-                        ->where('programId', $program->id)
-                        ->count()
+                    'total' => [
+                        'all'    => $row ? (int) $row->all_count    : 0,
+                        'male'   => $row ? (int) $row->male_count   : 0,
+                        'female' => $row ? (int) $row->female_count : 0,
+                    ],
                 ];
             });
 
@@ -224,7 +262,7 @@ class ReportController extends Controller
                 ->where('institutionId', $institutionId)
                 ->when($yearId, fn($q) => $q->where('yearId', $yearId))
                 ->orderBy('created_at', 'desc')
-                ->limit(10)
+                ->limit(6)
                 ->get();
 
             return response([
@@ -232,28 +270,59 @@ class ReportController extends Controller
                 'result' => [
                     'institution' => $institution,
                     'stats' => [
-                        'total' => $totalStudents,
-                        'verified' => $verifiedStudents,
-                        'unverified' => $unverifiedStudents,
-                        'boarding' => $totalBoarding,
-                        'nonBoarding' => $totalNonBoarding,
-                        'programs' => $programBreakdown,
-                        'out' => $studentsOut
+                        'total'       => $totalStats,
+                        'verified'    => $verifiedStats,
+                        'unverified'  => $unverifiedStats,
+                        'boarding'    => $boardingStats,
+                        'nonBoarding' => $nonBoardingStats,
+                        'out'         => $outStats,
+                        'programs'    => $programBreakdown,
                     ],
                     'recentStudents' => $recentStudents->map(fn($item) => [
-                        'name' => $item->personal->name,
-                        'gender' => $item->personal->gender,
-                        'verified' => $item->verification !== null,
+                        'name'       => $item->personal?->name,
+                        'gender'     => $item->personal?->gender,
+                        'verified'   => $item->verification !== null,
                         'created_at' => $item->created_at->toDateTimeString(),
-                    ])
-                ]
+                    ]),
+                ],
             ]);
         } catch (Exception $e) {
             return response([
                 'status' => 'error',
-                'statusMessage' => $e->getMessage()
+                'statusMessage' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Aggregate a StudentProgram query into a gender breakdown.
+     *
+     * Returns ['all' => N, 'male' => N, 'female' => N]. Joined to
+     * student_personals; gender is stored there as int (1=L, 2=P).
+     * Counts unknown / null genders as neither male nor female so the
+     * sum may legitimately be < `all`.
+     */
+    private function genderBreakdown($query): array
+    {
+        $row = $query
+            ->join(
+                'student_personals',
+                'student_personals.userId',
+                '=',
+                'student_programs.userId'
+            )
+            ->selectRaw(
+                'COUNT(*) as all_count,
+                 SUM(CASE WHEN student_personals.gender = 1 THEN 1 ELSE 0 END) as male_count,
+                 SUM(CASE WHEN student_personals.gender = 2 THEN 1 ELSE 0 END) as female_count'
+            )
+            ->first();
+
+        return [
+            'all'    => (int) ($row->all_count    ?? 0),
+            'male'   => (int) ($row->male_count   ?? 0),
+            'female' => (int) ($row->female_count ?? 0),
+        ];
     }
     public function adminStats(Request $request)
     {

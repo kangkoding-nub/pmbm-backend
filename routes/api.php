@@ -25,6 +25,7 @@ use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\Student\AchievementController;
 use App\Http\Controllers\Student\AddressController;
 use App\Http\Controllers\Student\FileController;
+use App\Http\Controllers\Student\FileDownloadController;
 use App\Http\Controllers\Student\OriginController;
 use App\Http\Controllers\Student\ParentController;
 use App\Http\Controllers\Student\PersonalController;
@@ -41,10 +42,16 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(callback: function () {
     Route::prefix('auth')->group(function () {
-        Route::post('register', [AuthController::class, 'register']);
-        Route::post('login', [AuthController::class, 'login']);
-        Route::post('phone-verify', [AuthController::class, 'phoneVerify']);
-        Route::post('get-phone-verify', [AuthController::class, 'getPhoneVerify']);
+        // Tight throttling on credential / OTP endpoints to make
+        // brute-force and WhatsApp spam infeasible.
+        Route::middleware('throttle:10,1')->group(function () {
+            Route::post('register', [AuthController::class, 'register']);
+        });
+        Route::middleware('throttle:5,1')->group(function () {
+            Route::post('login', [AuthController::class, 'login']);
+            Route::post('phone-verify', [AuthController::class, 'phoneVerify']);
+            Route::post('get-phone-verify', [AuthController::class, 'getPhoneVerify']);
+        });
         Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
         Route::get('profile', [AuthController::class, 'profile'])->middleware('auth:sanctum');
     });
@@ -95,18 +102,42 @@ Route::prefix('v1')->group(callback: function () {
             Route::get('download-all-receipts', [PaymentController::class, 'downloadAllReceipts']);
             Route::get('{id}/generate-receipt', [PaymentController::class, 'generateReceipt']);
             Route::get('{id}/download-receipt', [PaymentController::class, 'downloadReceipt']);
-            Route::apiResource('gateway', GatewayController::class)->only(['index', 'update']);
+            // Payment gateway configuration is system-wide, super-admin only.
+            Route::apiResource('gateway', GatewayController::class)
+                ->only(['index', 'update'])
+                ->middleware('role:1');
         });
-        Route::apiResource('announcement', AnnouncementController::class);
+        // Announcements: any authenticated user can read; only admins write.
+        // Roles allowed to publish: Administrator (1), Operator (2),
+        // Operator Pondok (5).
+        Route::apiResource('announcement', AnnouncementController::class)
+            ->only(['index', 'show']);
+        Route::apiResource('announcement', AnnouncementController::class)
+            ->only(['store', 'update', 'destroy'])
+            ->middleware('role:1,2,5');
         Route::apiResource('payment', PaymentController::class)->only(['index', 'store', 'update']);
-        Route::apiResource('user', UserController::class);
-        Route::post('whatsapp/login', [WhatsappController::class, 'login']);
-        Route::apiResource('whatsapp', WhatsAppController::class);
+        // User management: Administrator + Operator only.
+        Route::apiResource('user', UserController::class)->middleware('role:1,2');
+        // WhatsApp gateway: Administrator, Operator, Bendahara, Teller.
+        Route::post('whatsapp/login', [WhatsappController::class, 'login'])
+            ->middleware('role:1,2,3,6');
+        Route::apiResource('whatsapp', WhatsAppController::class)
+            ->middleware('role:1,2,3,6');
+
+        // Resources containing PII/operational data — must be authenticated.
+        // Public landing data is exposed separately under /public/* with a
+        // curated, minimal payload.
+        Route::apiResource('schedule', ScheduleController::class);
+        Route::apiResource('student', StudentController::class);
+        Route::apiResource('institution', InstitutionController::class);
+        Route::apiResource('testimony', TestimonyController::class);
+
+        // Manual trigger to (re)send a registration proof via WhatsApp.
+        // Only Administrator and Operator may invoke this; pendaftar use
+        // the self-service /student/registration-proof endpoint instead.
+        Route::post('/student/{userId}/send-whatsapp', [StudentController::class, 'sendWhatsAppRegistrationProof'])
+            ->middleware('role:1,2');
     });
-    Route::apiResource('schedule', ScheduleController::class);
-    Route::apiResource('student', StudentController::class);
-    Route::apiResource('institution', InstitutionController::class);
-    Route::apiResource('testimony', TestimonyController::class);
     Route::prefix('public')->group(function () {
         Route::get('landing', [PublicController::class, 'landing']);
         Route::get('year', [PublicController::class, 'year'] );
@@ -143,11 +174,28 @@ Route::prefix('v1')->group(callback: function () {
         });
     });
 
-    Route::post('/system/update', [\App\Http\Controllers\SystemController::class, 'update'])->middleware('auth:sanctum');
-
+    // Webhook callback from payment gateways. Signature is verified inside
+    // the controller, so this endpoint must remain public.
     Route::post('/callback/{provider}', [PaymentController::class, 'callback']);
+    // Public token-based verification endpoints (the token itself is the
+    // capability — long random string generated server-side per record).
     Route::get('/verify-receipt/{token}', [PaymentController::class, 'verifyReceipt']);
     Route::get('/verify-registration/{token}', [StudentController::class, 'verifyRegistration']);
-    Route::post('/student/{userId}/send-whatsapp', [StudentController::class, 'sendWhatsAppRegistrationProof']);
     Route::get('/student/verify/{token}', [StudentController::class, 'verifyRegistrationProof']);
+
+    // Private student document downloads. The signed URL itself is the
+    // capability — it is minted (with ownership already verified) inside
+    // FileResource / AchievementResource, signed, and expires after
+    // 10 minutes. Hence no auth:sanctum here, only the signature check.
+    Route::middleware('signed')->group(function () {
+        Route::get(
+            '/student/file/{file}/{slot}/download',
+            [FileDownloadController::class, 'downloadFile']
+        )->name('student.file.download')->whereIn('slot', ['photo', 'kk', 'ktp', 'akta', 'ijazah', 'skl', 'kip']);
+
+        Route::get(
+            '/student/achievement/{achievement}/image/download',
+            [FileDownloadController::class, 'downloadAchievement']
+        )->name('student.achievement.download');
+    });
 });

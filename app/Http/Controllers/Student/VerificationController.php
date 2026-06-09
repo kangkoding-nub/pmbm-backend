@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreVerificationRequest;
 use App\Http\Requests\Student\UpdateVerificationRequest;
 use App\Http\Resources\Student\VerificationResource;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 
 class VerificationController extends Controller
 {
+    use EnforcesStudentOwnership;
+
     public function index(Request $request)
     {
         try {
@@ -47,6 +50,7 @@ class VerificationController extends Controller
     }
     public function show(StudentVerification $verification)
     {
+        $this->ensureCanViewStudentRecord($verification);
         try {
             return response([
                 'status' => 'success',

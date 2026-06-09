@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
@@ -42,38 +43,38 @@ class AuthController extends Controller
         try {
             $credentials = $request->only(['email', 'password']);
             $user = User::where('email', $credentials['email'])->first();
-            if ($user) {
-                try {
-                    $decryptPassword = Crypt::decryptString($user->password);
-                    if ($decryptPassword === $credentials['password']) {
-                        Auth::login($user);
-                        if ($user->phone_verified_at !== null) {
-                            return response([
-                                'status' => 'success',
-                                'statusMessage' => 'Berhasil masuk, anda akan dialihkan dalam 2 detik.',
-                                'result' => [
-                                    'user' => $user->toArray(),
-                                    'token' => $user->createToken($request->user()->email)->plainTextToken
-                                ]
-                            ]);
-                        } else {
-                            return response([
-                                'status' => 'success',
-                                'statusMessage' => 'Berhasil masuk, anda akan dialihkan dalam 2 detik.',
-                                'result' => [
-                                    'user' => $user->toArray()
-                                ]
-                            ]);
-                        }
-                    } else {
-                        throw new Exception('Nama pengguna/kata sandi salah.', 401);
-                    }
-                } catch (DecryptException $e) {
-                    throw new Exception($e->getMessage(), 401);
-                }
-            } else {
+
+            if (!$user) {
                 throw new Exception('Nama pengguna/kata sandi salah.', 401);
             }
+
+            if (!$this->verifyPassword($user, $credentials['password'])) {
+                throw new Exception('Nama pengguna/kata sandi salah.', 401);
+            }
+
+            Auth::login($user);
+
+            if ($user->phone_verified_at !== null) {
+                return response([
+                    'status' => 'success',
+                    'statusMessage' => 'Berhasil masuk, anda akan dialihkan dalam 2 detik.',
+                    'result' => [
+                        'user' => $user->toArray(),
+                        // Use a generic token name instead of the user's
+                        // email — token names land in personal_access_tokens
+                        // and may surface in audit logs.
+                        'token' => $user->createToken('web-session')->plainTextToken
+                    ]
+                ]);
+            }
+
+            return response([
+                'status' => 'success',
+                'statusMessage' => 'Berhasil masuk, anda akan dialihkan dalam 2 detik.',
+                'result' => [
+                    'user' => $user->toArray()
+                ]
+            ]);
         } catch (Exception $e) {
             return response([
                 'status' => 'error',
@@ -82,32 +83,75 @@ class AuthController extends Controller
         }
     }
 
+    /**
+     * Verify a user's password against the stored credential.
+     *
+     * Supports lazy migration: if a stored password is still in the legacy
+     * Crypt::encryptString format, decrypt it once, compare, and re-hash with
+     * bcrypt so subsequent logins use the secure hash.
+     */
+    private function verifyPassword(User $user, string $plain): bool
+    {
+        $stored = $user->getAttributes()['password'] ?? null;
+        if (!$stored) {
+            return false;
+        }
+
+        // Already hashed (bcrypt / argon2) — happy path.
+        if (preg_match('/^\$(2y|2a|2b|argon2i|argon2id)\$/', $stored)) {
+            return Hash::check($plain, $stored);
+        }
+
+        // Legacy Crypt::encryptString payload — decrypt once, verify, then rehash.
+        try {
+            $legacyPlain = Crypt::decryptString($stored);
+        } catch (DecryptException $e) {
+            return false;
+        }
+
+        if (!hash_equals($legacyPlain, $plain)) {
+            return false;
+        }
+
+        // Lazy migrate to bcrypt. The mutator on the model will hash this value.
+        $user->password = $plain;
+        $user->saveQuietly();
+
+        return true;
+    }
+
     public function phoneVerify(Request $request)
     {
         try {
-            $otp = Otp::whereEmail($request->email)->whereDate('expires_at', '>=', Carbon::now())->first();
+            $otp = Otp::whereEmail($request->email)
+                ->where('expires_at', '>=', Carbon::now())
+                ->first();
             if ($otp === null) {
                 throw new Exception('Kode Verifikasi salah/kadaluarsa.', 442);
-            } else {
-                if ($request->otp == $otp->token) {
-                    $user = User::whereEmail($request->email)->first();
-                    $user->password = Crypt::decryptString($user->password);
-                    $user->phone_verified_at = Carbon::now();
-                    $user->save();
-                    $otp->delete();
-                    return response([
-                        'status' => 'success',
-                        'statusMessage' => 'Berhasil masuk, anda akan dialihkan dalam 2 detik.',
-                        'statusCode' => 200,
-                        'result' => [
-                            'user' => $user->toArray(),
-                            'token' => $user->createToken($user->email)->plainTextToken
-                        ]
-                    ]);
-                } else {
-                    throw new Exception('Kode Verifikasi salah/kadaluarsa.', 442);
-                }
             }
+
+            if ($request->otp != $otp->token) {
+                throw new Exception('Kode Verifikasi salah/kadaluarsa.', 442);
+            }
+
+            $user = User::whereEmail($request->email)->first();
+            // Mark phone as verified WITHOUT re-touching the password column.
+            // The password mutator would otherwise re-hash an already-hashed
+            // value or, worse, decrypt+re-encrypt legacy values.
+            $user->phone_verified_at = Carbon::now();
+            $user->save();
+            $otp->delete();
+
+            return response([
+                'status' => 'success',
+                'statusMessage' => 'Berhasil masuk, anda akan dialihkan dalam 2 detik.',
+                'statusCode' => 200,
+                'result' => [
+                    'user' => $user->toArray(),
+                    // Generic token name; do not include PII like email.
+                    'token' => $user->createToken('web-session')->plainTextToken
+                ]
+            ]);
         } catch (Exception $e) {
             return response([
                 'status' => 'error',

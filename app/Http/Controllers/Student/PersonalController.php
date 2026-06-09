@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StorePersonalRequest;
 use App\Http\Requests\Student\UpdatePersonalRequest;
 use App\Http\Resources\Student\PersonalResource;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 
 class PersonalController extends Controller
 {
+    use EnforcesStudentOwnership;
+
     public function index(Request $request)
     {
         try {
@@ -66,6 +69,7 @@ class PersonalController extends Controller
 
     public function show(StudentPersonal $personal)
     {
+        $this->ensureCanViewStudentRecord($personal);
         try {
             return response([
                 'status' => 'success',

@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Student;
 
+use App\Http\Requests\Concerns\AuthorizesStudentOwnedResource;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -9,18 +10,7 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 
 class UpdateAchievementRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
-    {
-        $user = $this->user('sanctum');
-        if ($user->role === 4) {
-            return $user->id == $this->request->get('userId');
-        } else {
-            return in_array($user->role, [1, 2]);
-        }
-    }
+    use AuthorizesStudentOwnedResource;
 
     /**
      * Get the validation rules that apply to the request.

@@ -47,6 +47,18 @@ return [
             'report' => false,
         ],
 
+        // Private disk for sensitive applicant documents (KK, KTP, akta,
+        // ijazah, SKL, KIP, photo, achievement certificates). Files here
+        // are NEVER served directly by the web server — access goes
+        // through the signed download endpoint with ownership checks.
+        'student-files' => [
+            'driver' => 'local',
+            'root' => storage_path('app/student-files'),
+            'visibility' => 'private',
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

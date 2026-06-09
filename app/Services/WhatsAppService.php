@@ -255,11 +255,33 @@ class WhatsAppService
     public function sendFile(string $phone, string $filePath, string $caption = ''): ?array
     {
         try {
+            // Defense against path traversal / arbitrary local file read.
+            // Only files inside the application's storage directory may be
+            // attached. Resolve to an absolute path and verify it falls
+            // beneath storage_path() before reading.
+            $resolved = realpath($filePath);
+            $allowedBase = realpath(storage_path());
+            if (
+                $resolved === false
+                || $allowedBase === false
+                || !str_starts_with($resolved, $allowedBase . DIRECTORY_SEPARATOR)
+                || !is_file($resolved)
+            ) {
+                Log::warning('WhatsApp sendFile rejected: file outside allowed directory', [
+                    'requested' => $filePath,
+                ]);
+                return [
+                    'success' => false,
+                    'error' => 'INVALID_FILE_PATH',
+                    'message' => 'File yang diminta tidak diizinkan untuk dikirim.',
+                ];
+            }
+
             $this->getDeviceId($phone);
             $response = Http::withHeaders($this->getMultipartHeaders($this->deviceId))
                 ->withBasicAuth($this->user, $this->pass)
                 ->asMultipart()
-                ->attach('file', file_get_contents($filePath), basename($filePath))
+                ->attach('file', file_get_contents($resolved), basename($resolved))
                 ->post("$this->url/send/file", [
                     ['name' => 'phone',        'contents' => $this->formatPhone($phone)],
                     ['name' => 'caption',      'contents' => $caption],

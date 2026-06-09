@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreAchievementRequest;
 use App\Http\Requests\Student\UpdateAchievementRequest;
 use App\Http\Resources\Student\AchievementResource;
@@ -13,6 +14,14 @@ use Illuminate\Support\Facades\Storage;
 
 class AchievementController extends Controller
 {
+    use EnforcesStudentOwnership;
+
+    /** Disk used for sensitive applicant achievement images (private). */
+    private const DISK = 'student-files';
+
+    /** Subdirectory inside the disk where uploads are stored. */
+    private const FOLDER = 'achievements';
+
     public function index(Request $request)
     {
         try {
@@ -35,9 +44,12 @@ class AchievementController extends Controller
     {
         try {
             if ($request->hasFile('image')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/achievement', $request->file('image'), $request->file('image')->hashName());
-                $request->merge(['file' => $path]);
+                $stored = Storage::disk(self::DISK)->putFileAs(
+                    self::FOLDER,
+                    $request->file('image'),
+                    $request->file('image')->hashName()
+                );
+                $request->merge(['file' => 'student-files/' . $stored]);
             }
             return ($achievement = StudentAchievement::create($request->all()))
                 ? response([
@@ -55,6 +67,7 @@ class AchievementController extends Controller
 
     public function show(StudentAchievement $achievement)
     {
+        $this->ensureCanViewStudentRecord($achievement);
         try {
             return response([
                 'status' => 'success',
@@ -73,10 +86,13 @@ class AchievementController extends Controller
     {
         try {
             if ($request->hasFile('image')) {
-                Storage::disk('public')->delete($achievement->getRawOriginal('file'));
-                $path = Storage::disk('public')
-                    ->putFileAs('images/achievement', $request->file('image'), $request->file('image')->hashName());
-                $request->merge(['file' => $path]);
+                $this->deleteStoredFile($achievement->getRawOriginal('file'));
+                $stored = Storage::disk(self::DISK)->putFileAs(
+                    self::FOLDER,
+                    $request->file('image'),
+                    $request->file('image')->hashName()
+                );
+                $request->merge(['file' => 'student-files/' . $stored]);
             }
             return $achievement->update($request->all())
                 ? response([
@@ -95,7 +111,7 @@ class AchievementController extends Controller
     public function destroy(StudentAchievement $achievement)
     {
         try {
-            Storage::disk('public')->delete($achievement->getRawOriginal('file'));
+            $this->deleteStoredFile($achievement->getRawOriginal('file'));
             return $achievement->delete()
                 ? response([
                     'status' => 'success',
@@ -108,5 +124,22 @@ class AchievementController extends Controller
                 'statusMessage' => $e->getMessage()
             ], 422);
         }
+    }
+
+    /**
+     * Remove a previously-stored file regardless of which disk it lives on.
+     * Records created before the private-disk migration still carry paths
+     * relative to the public disk.
+     */
+    private function deleteStoredFile(?string $path): void
+    {
+        if (!$path) {
+            return;
+        }
+        if (str_starts_with($path, 'student-files/')) {
+            Storage::disk(self::DISK)->delete(substr($path, strlen('student-files/')));
+            return;
+        }
+        Storage::disk('public')->delete($path);
     }
 }

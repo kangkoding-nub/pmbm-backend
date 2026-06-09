@@ -5,17 +5,12 @@ namespace App\Http\Requests\Student;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\Concerns\AuthorizesStudentOwnedResource;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 class StoreFileRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
-    {
-        return true;
-    }
+    use AuthorizesStudentOwnedResource;
 
     /**
      * Get the validation rules that apply to the request.
@@ -24,19 +19,24 @@ class StoreFileRequest extends FormRequest
      */
     public function rules(): array
     {
+        // The `image:mimes:...` syntax used previously was malformed — the
+        // `image` rule does not accept parameters. Use separate rules so
+        // Laravel actually enforces both image type and explicit MIME list.
+        $imageRules = ['image', 'mimes:jpeg,png,jpg', 'max:1024'];
+
         return [
-            'userId' => 'required|exists:users,id',
-            'imagePhoto' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'imageKk' => 'required|image:mimes:jpeg,png,jpg|max:1024',
-            'imageKtp' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'numberAkta' => 'nullable|string',
-            'imageAkta' => 'required|image:mimes:jpeg,png,jpg|max:1024',
-            'numberIjazah' => 'nullable|string',
-            'imageIjazah' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'numberSkl' => 'nullable|string',
-            'imageSkl' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'numberKip' => 'nullable|string',
-            'imageKip' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
+            'userId'        => 'required|exists:users,id',
+            'imagePhoto'    => array_merge(['nullable'], $imageRules),
+            'imageKk'       => array_merge(['required'], $imageRules),
+            'imageKtp'      => array_merge(['nullable'], $imageRules),
+            'numberAkta'    => 'nullable|string',
+            'imageAkta'     => array_merge(['required'], $imageRules),
+            'numberIjazah'  => 'nullable|string',
+            'imageIjazah'   => array_merge(['nullable'], $imageRules),
+            'numberSkl'     => 'nullable|string',
+            'imageSkl'      => array_merge(['nullable'], $imageRules),
+            'numberKip'     => 'nullable|string',
+            'imageKip'      => array_merge(['nullable'], $imageRules),
         ];
     }
 

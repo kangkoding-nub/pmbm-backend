@@ -4,6 +4,7 @@ namespace App\Models\Student;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 
 class StudentFile extends Model
 {
@@ -24,43 +25,83 @@ class StudentFile extends Model
     ];
     protected $appends = ['filePhoto', 'fileKk', 'fileKtp', 'fileAkta', 'fileIjazah', 'fileSkl', 'fileKip'];
 
+    /**
+     * Maps the slot identifier exposed in the signed download URL to the
+     * underlying database column.
+     */
+    private const SLOT_FOR_COLUMN = [
+        'filePhoto'  => 'photo',
+        'fileKk'     => 'kk',
+        'fileKtp'    => 'ktp',
+        'fileAkta'   => 'akta',
+        'fileIjazah' => 'ijazah',
+        'fileSkl'    => 'skl',
+        'fileKip'    => 'kip',
+    ];
+
     public function getFilePhotoAttribute(): string
     {
-        $file = $this->attributes['filePhoto'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('filePhoto');
     }
 
     public function getFileKkAttribute(): string
     {
-        $file = $this->attributes['fileKk'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('fileKk');
     }
 
     public function getFileKtpAttribute(): string
     {
-        $file = $this->attributes['fileKtp'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('fileKtp');
     }
 
     public function getFileAktaAttribute(): string
     {
-        $file = $this->attributes['fileAkta'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('fileAkta');
     }
 
     public function getFileIjazahAttribute(): string
     {
-        $file = $this->attributes['fileIjazah'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('fileIjazah');
     }
+
     public function getFileSklAttribute(): string
     {
-        $file =  $this->attributes['fileSkl'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('fileSkl');
     }
+
     public function getFileKipAttribute(): string
     {
-        $file =  $this->attributes['fileKip'] ?? null;
-        return $file ? url(Storage::url($file)) : '';
+        return $this->urlForColumn('fileKip');
+    }
+
+    /**
+     * Build the download URL for a given file column.
+     *
+     * Files stored on the new private disk (path prefixed with
+     * `student-files/`) are served through a signed, 10-minute URL that
+     * tunnels through {@see \App\Http\Controllers\Student\FileDownloadController}.
+     * Legacy files still living on the public disk fall through to the
+     * direct `Storage::url()` so the app keeps working during migration.
+     */
+    private function urlForColumn(string $column): string
+    {
+        $path = $this->attributes[$column] ?? null;
+        if (!$path) {
+            return '';
+        }
+
+        if (str_starts_with($path, 'student-files/')) {
+            return URL::temporarySignedRoute(
+                'student.file.download',
+                now()->addMinutes(10),
+                [
+                    'file' => $this->getKey(),
+                    'slot' => self::SLOT_FOR_COLUMN[$column],
+                ]
+            );
+        }
+
+        // Legacy public-disk path (transitional).
+        return url(Storage::url($path));
     }
 }

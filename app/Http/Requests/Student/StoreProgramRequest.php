@@ -5,17 +5,12 @@ namespace App\Http\Requests\Student;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\Concerns\AuthorizesStudentOwnedResource;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 class StoreProgramRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
-    {
-        return true;
-    }
+    use AuthorizesStudentOwnedResource;
 
     /**
      * Get the validation rules that apply to the request.

@@ -70,7 +70,14 @@ class InvoiceController extends Controller
     public function update(UpdateInvoiceRequest $request, Invoice $invoice)
     {
         try {
-            return $invoice->update(array_filter($request->all()))
+            // Whitelist via validated() to avoid mass-assignment of fields
+            // such as `link`, `createdBy`, or arbitrary input.
+            $payload = array_filter(
+                $request->validated(),
+                fn ($value) => $value !== null && $value !== ''
+            );
+
+            return $invoice->update($payload)
                 ? response([
                     'status' => 'success',
                     'statusMessage' => 'Data Tagihan berhasil diperbarui.',

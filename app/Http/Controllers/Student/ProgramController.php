@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreProgramRequest;
 use App\Http\Requests\Student\UpdateProgramRequest;
 use App\Http\Resources\Student\ProgramResource;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 
 class ProgramController extends Controller
 {
+    use EnforcesStudentOwnership;
+
     public function index(Request $request)
     {
         try {
@@ -47,6 +50,7 @@ class ProgramController extends Controller
     }
     public function show(StudentProgram $program)
     {
+        $this->ensureCanViewStudentRecord($program);
         try {
             return response([
                 'status' => 'success',

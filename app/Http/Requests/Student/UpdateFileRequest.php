@@ -5,17 +5,12 @@ namespace App\Http\Requests\Student;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\Concerns\AuthorizesStudentOwnedResource;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 class UpdateFileRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
-    {
-        return true;
-    }
+    use AuthorizesStudentOwnedResource;
 
     /**
      * Get the validation rules that apply to the request.
@@ -26,17 +21,19 @@ class UpdateFileRequest extends FormRequest
     {
         return [
             'userId' => 'required|exists:users,id',
-            'imagePhoto' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'imageKk' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'imageKtp' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'numberAkta' => 'nullable|string',
-            'imageAkta' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
+            // Fix malformed `image:mimes:...` rule — `image` takes no
+            // parameters; use a separate `mimes:` rule.
+            'imagePhoto'   => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
+            'imageKk'      => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
+            'imageKtp'     => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
+            'numberAkta'   => 'nullable|string',
+            'imageAkta'    => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
             'numberIjazah' => 'nullable|string',
-            'imageIjazah' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'numberSkl' => 'nullable|string',
-            'imageSkl' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
-            'numberKip' => 'nullable|string',
-            'imageKip' => 'nullable|image:mimes:jpeg,png,jpg|max:1024',
+            'imageIjazah'  => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
+            'numberSkl'    => 'nullable|string',
+            'imageSkl'     => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
+            'numberKip'    => 'nullable|string',
+            'imageKip'     => ['nullable', 'image', 'mimes:jpeg,png,jpg', 'max:1024'],
         ];
     }
 

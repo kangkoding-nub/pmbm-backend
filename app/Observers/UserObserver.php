@@ -5,7 +5,6 @@ namespace App\Observers;
 use App\Jobs\SendWhatsAppMessage;
 use App\Models\User;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Crypt;
 
 class UserObserver
 {
@@ -27,7 +26,9 @@ class UserObserver
                 $message .= "Kode OTP Anda adalah: *$code*" . PHP_EOL;
                 $message .= "Kode ini berlaku selama 10 menit. Jangan berikan kode ini kepada siapapun." . PHP_EOL;
             } else {
-                $message = $this->message($user);
+                // Admin-created account that is already phone-verified — user
+                // does not know their password yet, so we deliver it once.
+                $message = $this->welcomeMessage($user, $user->plainPassword);
             }
         }
         if ($user->phone && $message) {
@@ -41,9 +42,16 @@ class UserObserver
     public function updated(User $user): void
     {
         if ($user->role == 4) {
-            if ($user->getOriginal('phone_verified_at') == null) {
+            if ($user->getOriginal('phone_verified_at') == null && $user->phone_verified_at !== null) {
                 if ($user->phone) {
-                    SendWhatsAppMessage::dispatch($user->phone, $this->message($user));
+                    // Self-register flow: the user just verified via OTP and
+                    // already knows their password (they typed it during
+                    // registration). Send a welcome message WITHOUT echoing
+                    // the credential back over WhatsApp (option 3a).
+                    SendWhatsAppMessage::dispatch(
+                        $user->phone,
+                        $this->welcomeMessage($user, null)
+                    );
                 }
             }
         }
@@ -65,13 +73,24 @@ class UserObserver
         //
     }
 
-    private function message(User $user) : string
+    /**
+     * Build the welcome WhatsApp message.
+     *
+     * When $plainPassword is provided (admin-created accounts) we include the
+     * credential exactly once. For self-registered users it is null because
+     * the user already knows their own password and we MUST NOT decrypt the
+     * stored hash to echo it back.
+     */
+    private function welcomeMessage(User $user, ?string $plainPassword) : string
     {
         $message = "*PMBM YAYASAN DARUL HIKMAH*". PHP_EOL . PHP_EOL;
         $message .= "ini adalah pesan otomatis dari sistem." . PHP_EOL . PHP_EOL;
         $message .= "Selamat bergabung, $user->name." . PHP_EOL;
         $message .= "Nama Pengguna anda adalah: ". $user->email . PHP_EOL;
-        $message .= "Kata Sandi adalah: " . Crypt::decryptString($user->password) . PHP_EOL;
+        if (!empty($plainPassword)) {
+            $message .= "Kata Sandi adalah: " . $plainPassword . PHP_EOL;
+            $message .= "Demi keamanan, segera ganti kata sandi setelah login pertama." . PHP_EOL;
+        }
         $message .= "Silahkan login ke aplikasi https://pmbm.darul-hikmah.sch.id/masuk untuk melengkapi pendaftaran." . PHP_EOL;
         $message .= "Jika terdapat kesulitan, silahkan menghubungi admin kami." . PHP_EOL;
         $message .= "Terima kasih." . PHP_EOL;

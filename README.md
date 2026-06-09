@@ -45,6 +45,104 @@ Panduan ini menjelaskan alur deployment untuk backend aplikasi PMBM Yayasan Daru
    php artisan migrate --force
    ```
 
+## Upgrade dari Versi Sebelum Hardening Keamanan
+
+Bagian ini wajib dibaca jika Anda menarik update yang membawa perubahan keamanan
+(password hashing, role middleware, file privat, dll). Ikuti urutan langkahnya
+agar pengguna lama tidak terkunci dan file pendaftar lama tetap dapat diakses.
+
+### 1. Tarik kode dan install dependensi
+
+```bash
+git pull
+composer install --no-interaction --optimize-autoloader --no-dev
+```
+
+### 2. Konfigurasi `.env` baru
+
+Tambahkan / perbarui variabel berikut di `.env`:
+
+```env
+# WAJIB di production
+APP_DEBUG=false
+
+# Frontend SPA (boleh comma-separated untuk multi domain)
+FRONTEND_URL=https://app.example.com
+
+# Sanctum SPA (kosongkan jika frontend pakai Bearer token saja)
+SANCTUM_STATEFUL_DOMAINS=app.example.com
+```
+
+Lalu refresh cache konfigurasi:
+
+```bash
+php artisan config:clear
+php artisan cache:clear
+```
+
+### 3. Migrasi password lama → bcrypt
+
+Pengguna existing pasti tersimpan dengan format `Crypt::encryptString` lama.
+Mereka tetap bisa login (sistem akan rehash otomatis di login pertama),
+namun untuk men-tutup akses lama secara serentak jalankan command bulk:
+
+```bash
+# Preview lebih dulu
+php artisan users:rehash-passwords --dry-run
+
+# Eksekusi sungguhan
+php artisan users:rehash-passwords
+```
+
+Command bersifat idempoten — aman dijalankan ulang.
+
+### 4. Migrasi file pendaftar ke disk privat
+
+Berkas KK / KTP / akta / ijazah / SKL / KIP / pas foto / sertifikat prestasi
+sebelumnya berada di `storage/app/public/images/...` dan dapat diakses
+oleh siapa saja yang mengetahui URL-nya. Setelah hardening, berkas ini
+disajikan lewat **signed URL** yang berlaku 10 menit dan dilindungi
+ownership check.
+
+```bash
+# Preview rencana migrasi
+php artisan students:migrate-file-storage --dry-run
+
+# Eksekusi (pindah file fisik + update path di DB)
+php artisan students:migrate-file-storage
+```
+
+Command ini idempoten dan membaca file yang sudah dipindahkan akan
+di-skip otomatis. Setelah selesai dan diverifikasi, folder
+`storage/app/public/images/files/` dan `images/achievement/` boleh
+dihapus karena sudah kosong.
+
+> [!IMPORTANT]
+> Pastikan direktori `storage/app/student-files/` dapat ditulis oleh
+> user web server (`www-data`). Buat dulu sebelum menjalankan command:
+> ```bash
+> sudo -u www-data mkdir -p storage/app/student-files
+> ```
+
+### 5. Verifikasi
+
+```bash
+# Pastikan endpoint sensitif punya middleware role
+php artisan route:list -v --path=api/v1/user
+php artisan route:list -v --path=api/v1/whatsapp
+php artisan route:list -v --path=api/v1/announcement
+
+# Pastikan endpoint signed download terdaftar
+php artisan route:list --path=api/v1/student/file
+```
+
+Manual smoke test (dengan akun pendaftar role 4):
+- Login → ambil token Bearer
+- `GET /api/v1/student/file/{id}` milik diri sendiri → 200, URL signed
+- `GET /api/v1/student/file/{id}` milik pendaftar lain → 403
+- Buka URL signed → file ter-stream
+- Tunggu 11 menit → buka URL yang sama → 403
+
 ## Konfigurasi Queue Worker (Persistent Service)
 
 Untuk production, menjalankan `queue:work` via cronjob kurang efisien karena prosesnya akan terus mati dan hidup. Disarankan menggunakan **process manager** agar worker selalu berjalan dan otomatis restart jika server melakukan reboot.

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreParentRequest;
 use App\Http\Requests\Student\UpdateParentRequest;
 use App\Http\Resources\Student\ParentResource;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 
 class ParentController extends Controller
 {
+    use EnforcesStudentOwnership;
+
     public function index(Request $request)
     {
         try {
@@ -49,6 +52,7 @@ class ParentController extends Controller
 
     public function show(StudentParent $parent)
     {
+        $this->ensureCanViewStudentRecord($parent);
         try {
             return response([
                 'status' => 'success',

@@ -14,6 +14,7 @@ use App\Services\LogService;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use App\Services\Payment\PaymentFactory;
 use App\Models\Payment\Gateway;
 use App\Services\PaymentReceiptService;
@@ -116,7 +117,41 @@ class PaymentController extends Controller
     public function update(Request $request, Payment $payment)
     {
         try {
-            return $payment->update(array_filter($request->all()))
+            // Roles allowed to mutate payment records:
+            //   1 = Administrator, 3 = Bendahara, 6 = Teller.
+            // Attacker-controlled fields like `transaction_id`, `amount`,
+            // and `userId` are excluded from the update payload below.
+            $actor = $request->user('sanctum');
+            $allowedRoles = [1, 3, 6];
+            if (!$actor || !in_array((int) $actor->role, $allowedRoles, true)) {
+                return response([
+                    'status' => 'error',
+                    'statusMessage' => 'Akses ditolak.'
+                ], 403);
+            }
+
+            $validated = $request->validate([
+                'status'           => 'nullable|integer|in:1,2,3',
+                'method'           => 'nullable|integer|in:1,2',
+                'transaction_time' => 'nullable|date',
+                'note'             => 'nullable|string|max:500',
+            ]);
+
+            $payload = array_filter(
+                $validated,
+                fn ($value) => $value !== null && $value !== ''
+            );
+
+            if (empty($payload)) {
+                return response([
+                    'status' => 'error',
+                    'statusMessage' => 'Tidak ada data yang dapat diperbarui.'
+                ], 422);
+            }
+
+            $payload['updatedBy'] = $actor->id;
+
+            return $payment->update($payload)
             ? response([
                 'status' => 'success',
                 'statusMessage' => 'Data berhasil diubah.',
@@ -134,17 +169,18 @@ class PaymentController extends Controller
     public function callback(Request $request, $provider = 'midtrans')
     {
         try {
-            // Log incoming webhook for debugging
+            // Log webhook payload but strip request headers — they may
+            // contain Authorization / cookies forwarded by reverse proxies
+            // and we don't want secrets ending up in app logs.
             \Log::info("Webhook received from {$provider}", [
-                'headers' => $request->headers->all(),
-                'payload' => $request->all()
+                'payload' => $request->all(),
             ]);
 
             $service = PaymentFactory::createFromProvider($provider);
             $data = $service->handleCallback($request->all());
 
-            // Parse order_id/external_id to get invoice reference
-            // Format expected: REF-Time or INV-XXX-Time
+            // Parse order_id/external_id to get invoice reference.
+            // Format expected: {reference}-{SUFFIX?}-{timestamp}.
             $orderId = $data['order_id'] ?? '';
 
             if (empty($orderId)) {
@@ -153,64 +189,78 @@ class PaymentController extends Controller
 
             $orderIdParts = explode('-', $orderId);
 
-            // Handle different formats
             if (count($orderIdParts) >= 2) {
-                // Format: REF-Time or INV-XXX-Time
                 if (count($orderIdParts) == 2) {
-                    // Format: REF-Time
                     $invoiceReference = $orderIdParts[0] . '-' . $orderIdParts[1];
                 } else {
-                    // Format: INV-XXX-Time, take first two parts
                     $invoiceReference = $orderIdParts[0] . '-' . $orderIdParts[1];
                 }
             } else {
                 return response(['message' => 'Invalid order ID format'], 400);
             }
 
-            $invoice = Invoice::whereReference($invoiceReference)->first();
-
-            if (!$invoice) {
-                return response(['message' => 'Invoice not found: ' . $invoiceReference], 404);
-            }
-
             $transactionStatus = $data['transaction_status'];
-            $fraudStatus = $data['fraud_status'];
+            $fraudStatus = $data['fraud_status'] ?? null;
 
             $isSuccess = false;
             if ($transactionStatus == 'settlement' || ($transactionStatus == 'capture' && $fraudStatus == 'accept')) {
                 $isSuccess = true;
             }
 
-            if ($isSuccess) {
-                $existingPayment = Payment::where('transaction_id', $data['transaction_id'] ?? $data['order_id'])->first();
+            if (!$isSuccess) {
+                return response([
+                    'status' => 'success',
+                    'message' => 'Notification handled (not a settlement)'
+                ]);
+            }
+
+            // Wrap state mutations in a serialized transaction. The row-level
+            // lock on the invoice prevents two concurrent webhook deliveries
+            // (replay or duplicate) from both inserting a Payment and double-
+            // crediting the invoice.
+            DB::transaction(function () use ($invoiceReference, $data) {
+                $invoice = Invoice::whereReference($invoiceReference)->lockForUpdate()->first();
+                if (!$invoice) {
+                    throw new Exception('Invoice not found: ' . $invoiceReference);
+                }
+
+                $transactionId = $data['transaction_id'] ?? $data['order_id'];
+
+                // Idempotency guard: if the same transaction has already
+                // been recorded, exit silently inside the transaction.
+                $existingPayment = Payment::where('transaction_id', $transactionId)
+                    ->lockForUpdate()
+                    ->first();
                 if ($existingPayment) {
-                    return response(['message' => 'Payment already recorded'], 200);
+                    return;
                 }
 
                 $adminFee = 3500;
-                $paidAmount = (int)$data['amount'] - $adminFee;
-                if ($paidAmount < 0) $paidAmount = 0;
+                $paidAmount = (int) $data['amount'] - $adminFee;
+                if ($paidAmount < 0) {
+                    $paidAmount = 0;
+                }
 
                 Payment::create([
-                    'yearId' => $invoice->yearId,
-                    'institutionId' => $invoice->institutionId,
-                    'userId' => $invoice->userId,
-                    'invoiceId' => $invoice->id,
-                    'method' => 2, // Online (Generalized)
-                    'status' => 2, // Success
-                    'transaction_id' => $data['transaction_id'] ?? $data['order_id'], // Use order_id if trans_id null
+                    'yearId'           => $invoice->yearId,
+                    'institutionId'    => $invoice->institutionId,
+                    'userId'           => $invoice->userId,
+                    'invoiceId'        => $invoice->id,
+                    'method'           => 2, // Online
+                    'status'           => 2, // Success
+                    'transaction_id'   => $transactionId,
                     'transaction_time' => $data['transaction_time'] ?? Carbon::now(),
-                    'amount' => $paidAmount,
-                    'createdBy' => 0, // System
-                    'updatedBy' => 0, // System
+                    'amount'           => $paidAmount,
+                    'createdBy'        => 0, // System
+                    'updatedBy'        => 0, // System
                 ]);
 
                 $newAmount = $invoice->amount - $paidAmount;
                 $invoice->update([
                     'amount' => $newAmount,
-                    'status' => ($newAmount <= 0) ? 'PAID' : 'PENDING'
+                    'status' => ($newAmount <= 0) ? 'PAID' : 'PENDING',
                 ]);
-            }
+            });
 
             return response([
                 'status' => 'success',
@@ -218,6 +268,9 @@ class PaymentController extends Controller
             ]);
 
         } catch (Exception $e) {
+            \Log::error("Webhook handling failed for {$provider}", [
+                'error' => $e->getMessage(),
+            ]);
             return response([
                 'status' => 'error',
                 'message' => $e->getMessage()

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreFileRequest;
 use App\Http\Requests\Student\UpdateFileRequest;
 use App\Http\Resources\Student\FileResource;
@@ -13,6 +14,14 @@ use Illuminate\Support\Facades\Storage;
 
 class FileController extends Controller
 {
+    use EnforcesStudentOwnership;
+
+    /** Disk used for sensitive applicant documents (private). */
+    private const DISK = 'student-files';
+
+    /** Subdirectory inside the disk where uploads are stored. */
+    private const FOLDER = 'documents';
+
     public function index(Request $request)
     {
         try {
@@ -33,41 +42,16 @@ class FileController extends Controller
     public function store(StoreFileRequest $request)
     {
         try {
-            if ($request->hasFile('imagePhoto')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imagePhoto'), $request->file('imagePhoto')->hashName());
-                $request->merge(['filePhoto' => $path]);
-            }
-            if ($request->hasFile('imageKk')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageKk'), $request->file('imageKk')->hashName());
-                $request->merge(['fileKk' => $path]);
-            }
-            if ($request->hasFile('imageKtp')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageKtp'), $request->file('imageKtp')->hashName());
-                $request->merge(['fileKtp' => $path]);
-            }
-            if ($request->hasFile('imageAkta')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageAkta'), $request->file('imageAkta')->hashName());
-                $request->merge(['fileAkta' => $path]);
-            }
-            if ($request->hasFile('imageIjazah')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageIjazah'), $request->file('imageIjazah')->hashName());
-                $request->merge(['fileIjazah' => $path]);
-            }
-            if ($request->hasFile('imageSkl')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageSkl'), $request->file('imageSkl')->hashName());
-                $request->merge(['fileSkl' => $path]);
-            }
-            if ($request->hasFile('imageKip')) {
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageKip'), $request->file('imageKip')->hashName());
-                $request->merge(['fileKip' => $path]);
-            }
+            $request->merge($this->storeUploads($request, [
+                'imagePhoto'  => 'filePhoto',
+                'imageKk'     => 'fileKk',
+                'imageKtp'    => 'fileKtp',
+                'imageAkta'   => 'fileAkta',
+                'imageIjazah' => 'fileIjazah',
+                'imageSkl'    => 'fileSkl',
+                'imageKip'    => 'fileKip',
+            ]));
+
             $data = $request->except(['imagePhoto', 'imageKk', 'imageKtp', 'imageAkta', 'imageIjazah', 'imageSkl', 'imageKip']);
             return ($file = StudentFile::create(array_filter($data, function($value) {
                 return !is_null($value) && $value !== '';
@@ -86,6 +70,7 @@ class FileController extends Controller
     }
     public function show(StudentFile $file)
     {
+        $this->ensureCanViewStudentRecord($file);
         try {
             return response([
                 'status' => "success",
@@ -102,54 +87,16 @@ class FileController extends Controller
     public function update(UpdateFileRequest $request, StudentFile $file)
     {
         try {
-            if ($request->hasFile('imagePhoto')) {
-                Storage::disk('public')->delete($file->getRawOriginal('filePhoto'));
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imagePhoto'), $request->file('imagePhoto')->hashName());
-                $request->merge(['filePhoto' => $path]);
-            }
-            if ($request->hasFile('imageKk')) {
-                Storage::disk('public')->delete($file->getRawOriginal('fileKk'));
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageKk'), $request->file('imageKk')->hashName());
-                $request->merge(['fileKk' => $path]);
-            }
-            if ($request->hasFile('imageKtp')) {
-                Storage::disk('public')->delete($file->getRawOriginal('fileKtp'));
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageKtp'), $request->file('imageKtp')->hashName());
-                $request->merge(['fileKtp' => $path]);
-            }
-            if ($request->hasFile('imageAkta')) {
-                Storage::disk('public')->delete($file->getRawOriginal('fileAkta'));
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageAkta'), $request->file('imageAkta')->hashName());
-                $request->merge(['fileAkta' => $path]);
-            }
-            if ($request->hasFile('imageIjazah')) {
-                if ($file->fileIjazah != null) {
-                    Storage::disk('public')->delete($file->getRawOriginal('fileIjazah'));
-                }
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageIjazah'), $request->file('imageIjazah')->hashName());
-                $request->merge(['fileIjazah' => $path]);
-            }
-            if ($request->hasFile('imageSkl')) {
-                if ($file->fileSkl != null) {
-                    Storage::disk('public')->delete($file->getRawOriginal('fileSkl'));
-                }
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageSkl'), $request->file('imageSkl')->hashName());
-                $request->merge(['fileSkl' => $path]);
-            }
-            if ($request->hasFile('imageKip')) {
-                if ($file->fileKip != null) {
-                    Storage::disk('public')->delete($file->getRawOriginal('fileKip'));
-                }
-                $path = Storage::disk('public')
-                    ->putFileAs('images/files', $request->file('imageKip'), $request->file('imageKip')->hashName());
-                $request->merge(['fileKip' => $path]);
-            }
+            $request->merge($this->storeUploads($request, [
+                'imagePhoto'  => 'filePhoto',
+                'imageKk'     => 'fileKk',
+                'imageKtp'    => 'fileKtp',
+                'imageAkta'   => 'fileAkta',
+                'imageIjazah' => 'fileIjazah',
+                'imageSkl'    => 'fileSkl',
+                'imageKip'    => 'fileKip',
+            ], $file));
+
             $data = $request->except(['imagePhoto', 'imageKk', 'imageKtp', 'imageAkta', 'imageIjazah', 'imageSkl', 'imageKip']);
             return $file = $file->update(array_filter($data, function($value) {
                 return !is_null($value) && $value !== '';
@@ -169,12 +116,9 @@ class FileController extends Controller
     public function destroy(StudentFile $file)
     {
         try {
-            Storage::disk('public')->delete($file->getRawOriginal('fileKk'));
-            Storage::disk('public')->delete($file->getRawOriginal('fileKtp'));
-            Storage::disk('public')->delete($file->getRawOriginal('fileAkta'));
-            Storage::disk('public')->delete($file->getRawOriginal('fileIjazah'));
-            Storage::disk('public')->delete($file->getRawOriginal('fileSkl'));
-            Storage::disk('public')->delete($file->getRawOriginal('fileKip'));
+            foreach (['filePhoto', 'fileKk', 'fileKtp', 'fileAkta', 'fileIjazah', 'fileSkl', 'fileKip'] as $column) {
+                $this->deleteStoredFile($file->getRawOriginal($column));
+            }
             return $file->delete()
                 ? response([
                     'status' => "success",
@@ -187,5 +131,59 @@ class FileController extends Controller
                 'statusMessage' => $e->getMessage()
             ], 422);
         }
+    }
+
+    /**
+     * Persist any uploaded files to the private disk and return a map of
+     * column => relative path that the caller can merge back into the
+     * request payload.
+     *
+     * The returned path is prefixed with `student-files/` so that older
+     * code paths and the migration command can disambiguate new (private)
+     * vs legacy (public disk) records.
+     *
+     * @param  array<string,string>  $map        request field => DB column
+     * @param  StudentFile|null      $existing   to delete prior file on replace
+     * @return array<string,string>
+     */
+    private function storeUploads(Request $request, array $map, ?StudentFile $existing = null): array
+    {
+        $patches = [];
+        foreach ($map as $field => $column) {
+            if (!$request->hasFile($field)) {
+                continue;
+            }
+
+            // Replace: clean up the previous upload (works for both legacy
+            // public-disk paths and new private-disk paths).
+            if ($existing) {
+                $this->deleteStoredFile($existing->getRawOriginal($column));
+            }
+
+            $uploaded = $request->file($field);
+            $stored = Storage::disk(self::DISK)->putFileAs(
+                self::FOLDER,
+                $uploaded,
+                $uploaded->hashName()
+            );
+            $patches[$column] = 'student-files/' . $stored;
+        }
+        return $patches;
+    }
+
+    /**
+     * Remove a previously-stored file regardless of which disk it lives on.
+     */
+    private function deleteStoredFile(?string $path): void
+    {
+        if (!$path) {
+            return;
+        }
+        if (str_starts_with($path, 'student-files/')) {
+            Storage::disk(self::DISK)->delete(substr($path, strlen('student-files/')));
+            return;
+        }
+        // Legacy entries created before the migration to the private disk.
+        Storage::disk('public')->delete($path);
     }
 }

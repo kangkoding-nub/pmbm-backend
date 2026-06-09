@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreOriginRequest;
 use App\Http\Requests\Student\UpdateOriginRequest;
 use App\Http\Resources\Student\OriginResource;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 
 class OriginController extends Controller
 {
+    use EnforcesStudentOwnership;
+
     public function index(Request $request)
     {
         try {
@@ -49,6 +52,7 @@ class OriginController extends Controller
 
     public function show(StudentOrigin $origin)
     {
+        $this->ensureCanViewStudentRecord($origin);
         try {
             return response([
                 'status' => 'success',

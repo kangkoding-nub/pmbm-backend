@@ -5,18 +5,12 @@ namespace App\Http\Requests\Student;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\Concerns\AuthorizesStudentOwnedResource;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 class UpdateVerificationRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
-    {
-        return in_array($this->user('sanctum')->role, [1, 2, 4]) ||
-            $this->user('sanctum')->id == $this->request->get('userId');
-    }
+    use AuthorizesStudentOwnedResource;
 
     /**
      * Get the validation rules that apply to the request.

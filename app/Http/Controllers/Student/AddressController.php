@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\EnforcesStudentOwnership;
 use App\Http\Requests\Student\StoreAddressRequest;
 use App\Http\Requests\Student\UpdateAddressRequest;
 use App\Http\Resources\Student\AddressResource;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 
 class AddressController extends Controller
 {
+    use EnforcesStudentOwnership;
+
     public function index(Request $request)
     {
         try {
@@ -49,6 +52,7 @@ class AddressController extends Controller
 
     public function show(StudentAddress $address)
     {
+        $this->ensureCanViewStudentRecord($address);
         try {
             return response([
                 'status' => 'success',
