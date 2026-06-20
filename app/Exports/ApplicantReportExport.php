@@ -23,19 +23,25 @@ class ApplicantReportExport implements FromCollection, WithHeadings, WithMapping
     protected $programId;
     protected $status;
     protected $boardingId;
+    protected $isOperator;
 
-    public function __construct($yearId = null, $institutionId = null, $programId = null, $status = null, $boardingId = null)
+    public function __construct($yearId = null, $institutionId = null, $programId = null, $status = null, $boardingId = null, $isOperator = false)
     {
-        $this->yearId = $yearId;
+        $this->yearId        = $yearId;
         $this->institutionId = $institutionId;
-        $this->programId = $programId;
-        $this->status = $status;
-        $this->boardingId = $boardingId;
+        $this->programId     = $programId;
+        $this->status        = $status;
+        $this->boardingId    = $boardingId;
+        $this->isOperator    = $isOperator;
     }
 
     public function collection()
     {
-        $query = StudentProgram::with(['personal', 'institution', 'program', 'boarding', 'verification'])
+        $relations = $this->isOperator
+            ? ['personal', 'origin', 'program', 'boarding', 'verification']
+            : ['personal', 'institution', 'program', 'boarding', 'verification'];
+
+        $query = StudentProgram::with($relations)
             ->when($this->yearId, fn($q) => $q->where('yearId', $this->yearId))
             ->when($this->institutionId, fn($q) => $q->where('institutionId', $this->institutionId))
             ->when($this->programId, fn($q) => $q->where('programId', $this->programId))
@@ -54,29 +60,37 @@ class ApplicantReportExport implements FromCollection, WithHeadings, WithMapping
             $yearName = $year ? $year->name : '';
         }
 
+        $columns = $this->isOperator
+            ? ['ID', 'Nama', 'NISN', 'Jenis Kelamin', 'Program', 'Boarding', 'Sekolah Asal', 'Status Verifikasi', 'Tanggal Pendaftaran']
+            : ['ID', 'Nama', 'NISN', 'Jenis Kelamin', 'Lembaga', 'Program', 'Boarding', 'Status Verifikasi', 'Tanggal Pendaftaran'];
+
         return [
             ['LAPORAN PENDAFTAR ' . ($yearName ? 'TAHUN PELAJARAN ' . $yearName : '')],
-            [
-                'ID',
-                'Nama',
-                'NISN',
-                'Jenis Kelamin',
-                'Lembaga',
-                'Program',
-                'Boarding',
-                'Status Verifikasi',
-                'Tanggal Pendaftaran',
-            ]
+            $columns,
         ];
     }
 
     public function map($student): array
     {
+        if ($this->isOperator) {
+            return [
+                $student->id,
+                $student->personal->name ?? '-',
+                $student->personal->nisn ?? '-',
+                $student->personal->gender ? ($student->personal->gender == 1 ? 'Laki-laki' : 'Perempuan') : '-',
+                $student->program->name ?? '-',
+                $student->boarding->name ?? 'Non Boarding',
+                $student->origin->name ?? '-',
+                $student->verification !== null ? 'Terverifikasi' : 'Pending',
+                $student->created_at->format('d/m/Y H:i'),
+            ];
+        }
+
         return [
             $student->id,
             $student->personal->name ?? '-',
             $student->personal->nisn ?? '-',
-            $student->personal->gender ? ($student->personal->gender === 'L' ? 'Laki-laki' : 'Perempuan') : '-',
+            $student->personal->gender ? ($student->personal->gender == 1 ? 'Laki-laki' : 'Perempuan') : '-',
             $student->institution->surname ?? '-',
             $student->program->name ?? '-',
             $student->boarding->name ?? 'Non Boarding',

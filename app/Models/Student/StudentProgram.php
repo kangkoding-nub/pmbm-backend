@@ -80,6 +80,11 @@ class StudentProgram extends Model
         return $this->hasOne(StudentFile::class, 'userId', 'userId');
     }
 
+    public function origin(): HasOne
+    {
+        return $this->hasOne(StudentOrigin::class, 'userId', 'userId');
+    }
+
     public function room(): HasOne
     {
         return $this->hasOne(\App\Models\Master\Room::class, 'id', 'roomId');

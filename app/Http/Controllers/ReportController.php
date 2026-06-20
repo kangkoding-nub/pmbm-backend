@@ -520,14 +520,15 @@ class ReportController extends Controller
 
     public function exportApplicantReport(Request $request)
     {
-        $yearId = $request->input('yearId');
+        $yearId        = $request->input('yearId');
         $institutionId = $request->input('institutionId');
-        $programId = $request->input('programId');
-        $status = $request->input('status');
-        $boardingId = $request->input('boardingId');
+        $programId     = $request->input('programId');
+        $status        = $request->input('status');
+        $boardingId    = $request->input('boardingId');
+        $isOperator    = $request->user()->role === 2;
 
         return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\ApplicantReportExport($yearId, $institutionId, $programId, $status, $boardingId),
+            new \App\Exports\ApplicantReportExport($yearId, $institutionId, $programId, $status, $boardingId, $isOperator),
             'laporan-pendaftar-' . date('Y-m-d-His') . '.xlsx'
         );
     }
