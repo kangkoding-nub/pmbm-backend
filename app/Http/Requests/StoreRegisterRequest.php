@@ -29,7 +29,10 @@ class StoreRegisterRequest extends FormRequest
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6|confirmed',
             'phone' => 'required|string|unique:users',
-            'role' => 'required|integer',
+            // Self-registration from the public form may only create a
+            // Pendaftar account (role 4).  Admin / operator accounts must
+            // be provisioned by an existing admin inside the application.
+            'role' => 'required|integer|in:4',
         ];
     }
 

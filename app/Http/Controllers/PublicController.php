@@ -137,7 +137,7 @@ class PublicController extends Controller
     {
         try {
             $year = Year::whereActive(1)->first();
-            $periods = Period::where('yearId', $year->id)
+            $periods = Period::whereYearid($year->id)
                 ->with('institution')
                 ->orderBy('start')
                 ->get()

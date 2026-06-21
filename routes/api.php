@@ -3,6 +3,7 @@
 use App\Http\Controllers\Account\TransactionController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Institution\AccountController;
 use App\Http\Controllers\Institution\ActivityController;
 use App\Http\Controllers\Institution\PeriodController;
@@ -42,8 +43,6 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(callback: function () {
     Route::prefix('auth')->group(function () {
-        // Tight throttling on credential / OTP endpoints to make
-        // brute-force and WhatsApp spam infeasible.
         Route::middleware('throttle:10,1')->group(function () {
             Route::post('register', [AuthController::class, 'register']);
         });
@@ -73,6 +72,7 @@ Route::prefix('v1')->group(callback: function () {
             Route::apiResource('transaction', TransactionController::class)->only(['index', 'store']);
         });
         Route::prefix('dashboard')->group(function () {
+            Route::get('operator', [DashboardController::class, 'operator']);
             Route::get('transaction', [TransactionController::class, 'dashboard']);
         });
         Route::prefix('student')->group(function () {
@@ -124,17 +124,11 @@ Route::prefix('v1')->group(callback: function () {
         Route::apiResource('whatsapp', WhatsAppController::class)
             ->middleware('role:1,2,3,6');
 
-        // Resources containing PII/operational data — must be authenticated.
-        // Public landing data is exposed separately under /public/* with a
-        // curated, minimal payload.
         Route::apiResource('schedule', ScheduleController::class);
         Route::apiResource('student', StudentController::class);
         Route::apiResource('institution', InstitutionController::class);
         Route::apiResource('testimony', TestimonyController::class);
 
-        // Manual trigger to (re)send a registration proof via WhatsApp.
-        // Only Administrator and Operator may invoke this; pendaftar use
-        // the self-service /student/registration-proof endpoint instead.
         Route::post('/student/{userId}/send-whatsapp', [StudentController::class, 'sendWhatsAppRegistrationProof'])
             ->middleware('role:1,2');
     });
